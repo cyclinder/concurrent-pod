@@ -22,10 +22,10 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-var filePath = flag.String("f", "", "the file path of pod yaml, default is empty")
-var podNumber = flag.Int("n", 10, "number of pods created")
+var filePath = flag.String("f", "", "The file path of pod yaml, default is empty")
+var podNumber = flag.Int("n", 10, "Number of pods created, At least >= 1")
+var goroutineNumber = flag.Int("g",10,"Number of concurrent goroutines, At least >1")
 
-var threads int = 10
 var podTmplate string = `apiVersion: v1
 kind: Pod
 metadata:
@@ -57,25 +57,25 @@ func homeDir() string {
 // createPod
 func createPod(number int, pod *v1.Pod, clientSet *kubernetes.Clientset) {
 	if pod != nil {
-		klog.V(5).Infof("the basic info of pod: %v", pod)
+		klog.Infof("the basic info of pod: %v", pod)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		name := pod.Name
 		ch := make(chan int)
 		wg := sync.WaitGroup{}
-		wg.Add(threads)
-		for i := 0; i < threads; i++ {
+		wg.Add(*goroutineNumber)
+		for i := 0; i < *goroutineNumber; i++ {
 			go func(i int) {
 				klog.V(5).Infof("the number %v goroutine starts working...", i)
 				defer klog.V(5).Infof("the number %v goroutine stop working...", i)
 				defer wg.Done()
 				for idx := range ch {
-					_, err := clientSet.CoreV1().Pods("default").Create(ctx, pod, metav1.CreateOptions{})
+				 	tmpP := *pod
+				 	tmpP.Name = fmt.Sprintf("%s%v", tmpP.Name, idx)
+					_, err := clientSet.CoreV1().Pods("default").Create(ctx, &tmpP, metav1.CreateOptions{})
 					if err != nil {
-						klog.Infoln("create pod(%s) failed: %v", pod.Name, err)
+						klog.Errorf("(%v goroutine create pod(%s) failed: %v",i, tmpP.Name, err)
 					}
-					pod.Name = fmt.Sprintf("%s%v", name, idx)
-					klog.Infof("pod.Name = %v ", pod.Name)
+					 klog.Infof("(%v goroutine create pod(%s) success",i, tmpP.Name)
 				}
 
 			}(i)
@@ -86,8 +86,9 @@ func createPod(number int, pod *v1.Pod, clientSet *kubernetes.Clientset) {
 		}
 		close(ch)
 		wg.Wait()
+		return
 	}
-
+	klog.Infof("Pod is unexpected to be nil, No Pods were created")
 }
 
 func parseFileToPod(fp string, pod *v1.Pod) {
